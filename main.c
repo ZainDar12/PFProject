@@ -1,77 +1,34 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <termios.h>
-#include <fcntl.h>
+#include <conio.h>
+#include <windows.h>
 #include <time.h>
-#include <sys/time.h>
-#include <string.h>
 
 #define SCREEN_W 80
 #define SCREEN_H 25
 
-// Terminal helpers (ANSI escape sequences)
-static struct termios orig_termios;
-
-void disableRawMode() {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-    // show cursor on exit
-    printf("\033[?25h");
-    fflush(stdout);
-}
-
-void enableRawMode() {
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    atexit(disableRawMode);
-
-    struct termios raw = orig_termios;
-    raw.c_lflag &= ~(ECHO | ICANON); // no echo, non-canonical
-    raw.c_cc[VMIN] = 0; // non-blocking read
-    raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-
-    // hide cursor
-    printf("\033[?25l");
-    fflush(stdout);
-}
-
-int kbhit() {
-    struct timeval tv = {0L, 0L};
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(STDIN_FILENO, &fds);
-    return select(STDIN_FILENO+1, &fds, NULL, NULL, &tv) > 0;
-}
-
-int getch_nonblock() {
-    unsigned char c = 0;
-    ssize_t n = read(STDIN_FILENO, &c, 1);
-    if (n <= 0) return -1;
-    return c;
-}
-
+// console helpers
 void gotoXY(int x, int y) {
-    // ANSI: row (y) and column (x) are 1-based
-    printf("\033[%d;%dH", y + 1, x + 1);
-}
-
-void clearScreen() {
-    // clear screen and move cursor to top-left
-    printf("\033[2J\033[H");
+    COORD c = { (SHORT)x, (SHORT)y };
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), c);
 }
 
 void hideCursor() {
-    printf("\033[?25l");
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_CURSOR_INFO info;
+    GetConsoleCursorInfo(h, &info);
+    info.bVisible = 0;
+    SetConsoleCursorInfo(h, &info);
 }
 
-void showCursor() {
-    printf("\033[?25h");
+void clearToTopLeft() {
+    gotoXY(0, 0);
 }
 
 // sprites and visuals
 const char *dino_sprite[] = {
     " (^^) ",
-    "/||\\ ",
+    "/||\\\\ ",
     " /\\   "
 };
 
@@ -123,7 +80,7 @@ int playSingleRun() {
 
     // frame loop
     while (!gameOver) {
-        clearScreen();
+        clearToTopLeft();
 
         int day = (score % 2 == 0);
         drawSky(day);
@@ -136,8 +93,8 @@ int playSingleRun() {
         drawGround();
 
         // Input (non-blocking)
-        if (kbhit()) {
-            int ch = getch_nonblock();
+        if (_kbhit()) {
+            int ch = _getch();
             if (ch == ' ' && !jump) {
                 jump = 1;
                 rising = 1;
@@ -190,8 +147,7 @@ int playSingleRun() {
             gameOver = 1;
         }
 
-        // frame delay ~55ms
-        usleep(55000);
+        Sleep(55);
     }
 
     return score;
@@ -200,7 +156,7 @@ int playSingleRun() {
 // Display main menu and return choice: 'p' play, 'i' instructions, 'e' exit
 char mainMenu() {
     while (1) {
-        clearScreen();
+        system("cls");
         hideCursor();
         gotoXY(SCREEN_W/2 - 10, 4);
         printf("=== DINO CONSOLE RUNNER ===");
@@ -213,10 +169,7 @@ char mainMenu() {
         gotoXY(SCREEN_W/2 - 18, 14);
         printf("Press 1/2/3 to choose (or P/I/E).");
 
-        // blocking wait for a key
-        int ch = -1;
-        while (ch == -1) ch = getch_nonblock();
-
+        int ch = _getch();
         if (ch == '1' || ch == 'p' || ch == 'P') return 'p';
         if (ch == '2' || ch == 'i' || ch == 'I') return 'i';
         if (ch == '3' || ch == 'e' || ch == 'E') return 'e';
@@ -225,7 +178,7 @@ char mainMenu() {
 
 // Instructions screen (press any key to return)
 void showInstructions() {
-    clearScreen();
+    system("cls");
     hideCursor();
     gotoXY(8, 4);
     printf("INSTRUCTIONS:");
@@ -241,17 +194,13 @@ void showInstructions() {
     printf("High score is kept while program runs (no file).");
     gotoXY(8, 14);
     printf("Press any key to return to main menu...");
-
-    // wait for a keypress
-    while (!kbhit()) usleep(10000);
-    // consume key
-    getch_nonblock();
+    _getch();
 }
 
 // Restart menu shown after game over. Returns 'r' replay or 'e' exit to main menu
 char restartMenu(int lastScore, int high) {
     while (1) {
-        clearScreen();
+        system("cls");
         hideCursor();
         gotoXY(SCREEN_W/2 - 10, 6);
         printf("=== GAME OVER ===");
@@ -268,9 +217,7 @@ char restartMenu(int lastScore, int high) {
         gotoXY(SCREEN_W/2 - 28, 18);
         printf("Press 1/2/3 (or R/M/E).");
 
-        int ch = -1;
-        while (ch == -1) ch = getch_nonblock();
-
+        int ch = _getch();
         if (ch == '1' || ch == 'r' || ch == 'R') return 'r';
         if (ch == '2' || ch == 'm' || ch == 'M') return 'm';
         if (ch == '3' || ch == 'e' || ch == 'E') return 'e';
@@ -279,19 +226,18 @@ char restartMenu(int lastScore, int high) {
 
 int main() {
     // initial setup
-    enableRawMode();
+    hideCursor();
     srand((unsigned int)time(NULL));
-    clearScreen();
+    system("cls");
 
     while (1) {
         char choice = mainMenu();
 
         if (choice == 'e') {
-            clearScreen();
+            system("cls");
             gotoXY(SCREEN_W/2 - 6, SCREEN_H/2);
             printf("Goodbye!");
-            fflush(stdout);
-            usleep(700000);
+            Sleep(700);
             break;
         } else if (choice == 'i') {
             showInstructions();
@@ -312,11 +258,10 @@ int main() {
                 // return to main menu (outer loop)
                 continue;
             } else if (post == 'e') {
-                clearScreen();
+                system("cls");
                 gotoXY(SCREEN_W/2 - 6, SCREEN_H/2);
                 printf("Goodbye!");
-                fflush(stdout);
-                usleep(700000);
+                Sleep(700);
                 break;
             }
         }
